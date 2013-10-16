@@ -9,7 +9,8 @@ import numpy as np
 
 
 
-FILE_DIR = "./MIT-BIH"
+FILE_DIR = "../MIT-BIH"
+#FILE_DIR = "E:\Workspace\labplatform\ecg\MIT-BIH"
 
 # annotation about ecg see 
 # http://www.physionet.org/physiobank/annotations.shtml
@@ -60,47 +61,49 @@ ANNOT_LIST = ["NOT",	# NOTQRS	0	/* not-QRS (not a getann/putann code) */
 			  "MAX",		# ACMAX	49	/* value of largest valid annot code (must be < 50) */			  
 			  ""]
 class EcgData():
-	filename = ""
-	fs = 0			# sample rate
-	num = 0			# sample number
-	format = "212"  # data format saved
-	chn = {}		# ecg lead name
-	gain = {}		# channel gain
-	data = {}		# ecg data array
+	_filename = ""
+	_fs = 0			# sample rate
+	_num = 0			# sample number
+	_format = "212"  # data format saved
+	_chn = {}		# ecg lead name
+	_gain = {}		# channel gain
+	_data = {}		# ecg data array
+	_atr = []		# data annotations 
 	def __init__(self,name = ""):
-		self.filename = name
-		self.readHea()
+		self._filename = name
+		self.read_hea()
 	
-	def resetProperty(self):
-		self.filename = ""
-		self.fs = 0
-		self.num = 0
-		self.format = 0
-		self.chn = {}
-		self.gain = {}
+	def reset_property(self):
+		self._filename = ""
+		self._fs = 0
+		self._num = 0
+		self._format = 0
+		self._chn = {}
+		self._gain = {}
+		self._atr = []
 	
-	def getProperty(self):
-		return [self.filename,self.fs,self.num,self.format,self.chn,self.gain]
+	def get_property(self):
+		return [self._filename,self._fs,self._num,self._format,self._chn,self._gain]
 	
-	def readHea(self):
-		if self.filename == "":
+	def read_hea(self):
+		if self._filename == "":
 			return
-		dir = FILE_DIR + os.sep + self.filename + ".hea"
+		dir = FILE_DIR + os.sep + self._filename + ".hea"
 		fp = open(dir,"r")
 		line = fp.readline()
 		vals = line.split(" ")
 		if len(vals) < 4:
 			return
 		n = vals[1]
-		self.fs = int(vals[2])
-		self.num = int(vals[3])
+		self._fs = int(vals[2])
+		self._num = int(vals[3])
 		for i in range(int(n)):
 			line = fp.readline()
 			vals = line.split(" ")
-			self.chn[i] = vals[8]
-			self.gain[i] = vals[2]
-			self.format = vals[1]
-			self.data[i] = []
+			self._chn[i] = vals[8]
+			self._gain[i] = vals[2]
+			self._format = vals[1]
+			self._data[i] = []
 		fp.close()
 
 	def __opcode(self,code,time):
@@ -119,10 +122,10 @@ class EcgData():
 			return False,0
 			
 		
-	def readAtr(self):
-		if self.filename == "":
+	def read_atr(self):
+		if self._filename == "":
 			return
-		dir = FILE_DIR + os.sep + self.filename + ".atr"
+		dir = FILE_DIR + os.sep + self._filename + ".atr"
 		fp = open(dir,"rb")
 		point = [0]
 		annotation = []
@@ -138,59 +141,115 @@ class EcgData():
 				annotation.append(val)
 			else:
 				x = fp.read(val)
-		return point[1:],annotation
+		self._atr = [point[1:],annotation]
 	
-	def readDat(self):
-		if self.filename == "" or self.format != "212":
+	def read_dat(self):
+		if self._filename == "" or self._format != "212":
 			return
-		dir = FILE_DIR + os.sep + self.filename + ".dat"
+		dir = FILE_DIR + os.sep + self._filename + ".dat"
 		fp = open(dir,"rb") 							# must add "b" under windows for read as binary
-		for i in range(self.num):		
+		for i in range(self._num):		
 			v = struct.unpack("BBB",fp.read(3))			# read 3 bytes(as unsigned char) for two channel value once a time
 			ch1 = ((v[1] & 0x0f) << 8) + v[0]			# example: v : E3 33 F3
 			ch2 = ((v[1] & 0xf0) << 4) + v[2]			# 			ch1: 3E3	ch2: 3F3	
-			self.data[0].append(ch1)
-			self.data[1].append(ch2)
+			self._data[0].append(ch1)
+			self._data[1].append(ch2)
 		fp.close()
 			
-	def setFile(self,name = ""):
+	def set_file(self,name = ""):
 		if name == "":
 			return False
-		self.resetProperty()
-		self.filename = name
-		self.readHea()
-
-	def getDat(self,ch = 0,start = 0,n = 500):
-		if ch >= len(self.data):
+		self.reset_property()
+		self._filename = name
+		self.read_hea()
+	
+	def get_total_peak(self):
+		"""
+		get the total peaks of this ecg data
+		"""
+		annot = self._atr[1]
+		annd = {}
+		for ann in annot:
+			if ann in annd:
+				annd[ann] += 1
+			else:
+				annd[ann] = 1
+		total = 0
+		other = ["?","~","s","p","t","u","(",")","[","]"]
+		for (k,v) in annd.items():
+			if k in other:
+				continue
+			total += v
+		return total
+		
+	def get_atr(self,start = 0,seconds = 10):
+		"""
+		get annotations of the ecg data
+		input : start means the annotations data where to start
+				seconds means the length of the signal in seconds
+						if seconds is less than zero will return all the data
+		"""
+		if seconds <= 0:
+			return self._atr
+		start = start * self._fs
+		n = seconds * self._fs + start
+		if start > max(self._atr[0]):
 			return []
-		if n <= 0:  # get all data
-			return self.data[ch]
-		num = len(self.data[ch])
+		point,annot = self._atr
+		begin = 0
+		end = -1
+		for i in range(len(point)):
+			if point[i] >= start:
+				begin = i
+				for j in range(len(point)-i):
+					if point[i + j] > n:
+						end = i+j
+						break
+				break
+		if end > 0:
+			return [point[begin:end],annot[begin:end]]
+		else:
+			return [point[begin:],annot[begin:]]
+
+	def get_dat(self,ch = 0,start = 0,seconds = 10):
+		"""
+		get ecgdata which signal data is a list
+		input : start means the data where to start
+				seconds means the length of the signal in seconds
+						if seconds is less than zero will return all the data
+		"""
+		if ch >= len(self._data):
+			return []
+		if seconds <= 0:  # get all data
+			return self._data[ch]
+		n = seconds * self._fs
+		start = start * self._fs
+		num = len(self._data[ch])
 		if start > num:
 			return []
 		if start + n > num:
 			n = num - start
-		return self.data[ch][start:start + n]
+		return self._data[ch][start:start + n]
 	
-	def getFs(self):
-		return self.fs
+	def get_fs(self):
+		return self._fs
 		
 	# plot the ecg during "dur" seconds from the "start" time
 	def plot(self,start = 0,dur = 10):	
-		n = self.fs * dur
-		if self.fs * start + n > self.num:
-			n = self.num - self.fs*start
-			dur = n / self.fs
+		n = self._fs * dur
+		if self._fs * start + n > self._num:
+			n = self._num - self._fs*start
+			dur = n / self._fs
 		x = np.linspace(start,start + dur,n)
 		# plot channel 1
 		plt.subplot(211)
-		plt.plot(x,self.data[0][:n],"r",label=self.chn[0])
+		plt.plot(x,self._data[0][:n],"r",label=self._chn[0])
 		plt.xlabel("Time(s)")
 		plt.ylabel("Volt(mv)")
 		plt.legend()
 		# plot channel 2
 		plt.subplot(212)
-		plt.plot(x,self.data[1][:n],"r",label=self.chn[1])
+		plt.plot(x,self._data[1][:n],"r",label=self._chn[1])
 		plt.xlabel("Time(s)")
 		plt.ylabel("Volt(mv)")
 		plt.legend()
@@ -199,5 +258,5 @@ class EcgData():
 if __name__ == "__main__":
 	# test EcgData
 	ecgData = EcgData("100")
-	ecgData.readDat()
+	ecgData.read_dat()
 	ecgData.plot(0,10)
